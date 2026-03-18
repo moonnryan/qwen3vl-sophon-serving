@@ -20,79 +20,81 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 import mimetypes
 
+
 # ========== 命令行参数解析 ==========
 def parse_args():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(description="Qwen3-VL TPU推理服务")
-    
+
     # 核心参数（指定模型目录）
     parser.add_argument(
-        "-m", "--model_dir", 
+        "-m", "--model_dir",
         default="./models/qwen3vl_2b",
         help="模型目录路径 (默认: ./models/qwen3vl_2b)"
     )
-    
+
     # 并发控制参数
     parser.add_argument(
-        "-c", "--max_concurrent", 
-        type=int, 
+        "-c", "--max_concurrent",
+        type=int,
         default=10,
         help="最大并发请求数 (默认: 10)"
     )
-    
+
     # 日志级别
     parser.add_argument(
-        "-l", "--log_level", 
+        "-l", "--log_level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="日志级别 (默认: INFO)"
     )
-    
+
     # TPU设备ID
     parser.add_argument(
-        "-d", "--devid", 
-        type=int, 
+        "-d", "--devid",
+        type=int,
         default=0,
         help="TPU设备ID (默认: 0)"
     )
-    
+
     # 视频采样比例
     parser.add_argument(
-        "-v", "--video_ratio", 
-        type=float, 
+        "-v", "--video_ratio",
+        type=float,
         default=0.5,
         help="视频采样比例 (默认: 0.5)"
     )
-    
+
     # 端口号
     parser.add_argument(
-        "-p", "--port", 
-        type=int, 
+        "-p", "--port",
+        type=int,
         default=8899,
         help="服务端口号 (默认: 8899)"
     )
-    
+
     # API Key相关参数
     parser.add_argument(
-        "--api-key", 
-        type=str, 
+        "--api-key",
+        type=str,
         default="abc@123",
         help="API访问密钥（可选），若设置则所有受保护接口必须携带该密钥访问"
     )
     parser.add_argument(
-        "--api-key-header", 
-        type=str, 
+        "--api-key-header",
+        type=str,
         default="Authorization",
         help="传递API Key的HTTP请求头名称（默认: Authorization）"
     )
     parser.add_argument(
-        "--api-key-prefix", 
-        type=str, 
+        "--api-key-prefix",
+        type=str,
         default="Bearer",
         help="API Key的前缀（默认: Bearer），格式为「前缀 + 空格 + 密钥」"
     )
-    
+
     return parser.parse_args()
+
 
 # 解析命令行参数
 args = parse_args()
@@ -114,10 +116,11 @@ REQUEST_LOCK = asyncio.Lock()
 # 新增：API Key全局配置
 API_CONFIG = {
     "enabled": args.api_key is not None,  # 是否启用API Key认证
-    "api_key": args.api_key,              # 核心API密钥
-    "header_name": args.api_key_header,   # HTTP请求头名称
-    "prefix": args.api_key_prefix         # API Key前缀
+    "api_key": args.api_key,  # 核心API密钥
+    "header_name": args.api_key_header,  # HTTP请求头名称
+    "prefix": args.api_key_prefix  # API Key前缀
 }
+
 
 # 自动拼接模型路径和配置路径
 def find_bmodel_file(model_dir):
@@ -126,6 +129,7 @@ def find_bmodel_file(model_dir):
         if file.endswith(".bmodel"):
             return os.path.join(model_dir, file)
     raise FileNotFoundError(f"在目录 {model_dir} 中未找到.bmodel文件")
+
 
 # 模型全局配置（基于命令行参数自动生成）
 MODEL_CONFIG = {
@@ -140,6 +144,7 @@ MODEL_CONFIG = {
 # 每个线程存储独立的模型实例（线程局部存储）
 THREAD_LOCAL = threading.local()
 
+
 def create_model_args():
     """创建模型参数"""
     args = argparse.Namespace()
@@ -148,6 +153,7 @@ def create_model_args():
     args.devid = MODEL_CONFIG["devid"]
     args.video_ratio = MODEL_CONFIG["video_ratio"]
     return args
+
 
 def get_thread_local_model():
     """获取当前线程的模型实例（懒加载）"""
@@ -163,6 +169,7 @@ def get_thread_local_model():
             raise
     return THREAD_LOCAL.model_instance
 
+
 async def load_model_global():
     """预加载第一个线程的模型（服务启动时）"""
     try:
@@ -172,6 +179,7 @@ async def load_model_global():
     except Exception as e:
         logger.error(f"❌ 全局模型预加载失败: {e}")
         logger.error(traceback.format_exc())
+
 
 # 新增：API Key验证工具函数
 def validate_api_key(headers: Dict[str, str]) -> bool:
@@ -183,27 +191,28 @@ def validate_api_key(headers: Dict[str, str]) -> bool:
     # 若未启用API Key认证，直接返回通过
     if not API_CONFIG["enabled"]:
         return True
-    
+
     # 提取请求头中的认证信息
     auth_header = headers.get(API_CONFIG["header_name"], "")
     if not auth_header:
         return False
-    
+
     # 拆分前缀和密钥（支持大小写不敏感的前缀判断）
     parts = auth_header.split(" ", 1)
     if len(parts) != 2:
         return False
-    
+
     prefix, provided_key = parts
     if prefix.lower() != API_CONFIG["prefix"].lower():
         return False
-    
+
     # 对比密钥（严格匹配）
     return provided_key == API_CONFIG["api_key"]
 
+
 # 新增：依赖注入式API Key验证（适用于单个接口精细化控制）
 async def require_api_key(
-    api_header: Optional[str] = Header(None, alias=args.api_key_header)
+        api_header: Optional[str] = Header(None, alias=args.api_key_header)
 ) -> None:
     """
     FastAPI依赖项：验证API Key，失败则抛出401异常
@@ -212,7 +221,7 @@ async def require_api_key(
     # 若未启用API Key认证，直接返回
     if not API_CONFIG["enabled"]:
         return
-    
+
     # 验证逻辑
     if not api_header:
         raise HTTPException(
@@ -220,7 +229,7 @@ async def require_api_key(
             detail=f"缺少必要的 {API_CONFIG['header_name']} 请求头",
             headers={"WWW-Authenticate": API_CONFIG["prefix"]}
         )
-    
+
     parts = api_header.split(" ", 1)
     if len(parts) != 2 or parts[0].lower() != API_CONFIG["prefix"].lower():
         raise HTTPException(
@@ -228,7 +237,7 @@ async def require_api_key(
             detail=f"无效的认证格式，正确格式：{API_CONFIG['prefix']} <你的API Key>",
             headers={"WWW-Authenticate": API_CONFIG["prefix"]}
         )
-    
+
     provided_key = parts[1]
     if provided_key != API_CONFIG["api_key"]:
         raise HTTPException(
@@ -236,6 +245,7 @@ async def require_api_key(
             detail="无效的API Key，访问被拒绝",
             headers={"WWW-Authenticate": API_CONFIG["prefix"]}
         )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -247,17 +257,20 @@ async def lifespan(app: FastAPI):
     EXECUTOR.shutdown(wait=True)
     logger.info("✅ 服务已关闭，资源清理完成")
 
+
 app = FastAPI(
     title="Qwen3-VL TPU推理服务",
-    version="2.2.0",
-    description="基于算能SE7盒子的Qwen3-VL视觉语言模型推理服务（支持多并发+本地媒体文件+API Key认证）",
+    version="2.3.0",
+    description="基于算能SE7盒子的Qwen3-VL视觉语言模型推理服务（支持多并发+多图/文件夹+API Key认证）",
     lifespan=lifespan
 )
+
 
 # ========== 数据模型定义 ==========
 class ChatMessage(BaseModel):
     role: str
     content: str | List[Dict[str, Any]]  # 支持字符串或多模态内容
+
 
 class ChatCompletionRequest(BaseModel):
     model: str = "qwen3-vl-instruct"
@@ -266,10 +279,12 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: Optional[int] = 2048
     stream: Optional[bool] = False
 
+
 class ChatCompletionChoice(BaseModel):
     index: int
     message: ChatMessage
     finish_reason: str
+
 
 class ChatCompletionResponse(BaseModel):
     id: str
@@ -279,7 +294,8 @@ class ChatCompletionResponse(BaseModel):
     choices: List[ChatCompletionChoice]
     usage: Dict[str, int]
 
-# ========== 工具函数 ==========
+
+# ========== 工具函数（新增多图/文件夹处理） ==========
 def save_base64_image(base64_str: str) -> str:
     """保存base64图片到临时文件"""
     import base64
@@ -294,6 +310,7 @@ def save_base64_image(base64_str: str) -> str:
     except Exception as e:
         logger.error(f"保存base64图片失败: {e}")
         raise HTTPException(status_code=400, detail=f"无效的base64图片数据: {str(e)}")
+
 
 def download_media_from_url(url: str) -> tuple[str, str]:
     """从URL下载媒体文件（图片/视频）到临时文件，返回(文件路径, 媒体类型)"""
@@ -327,63 +344,108 @@ def download_media_from_url(url: str) -> tuple[str, str]:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"下载媒体时发生错误: {str(e)}")
 
-def load_local_media(file_path: str) -> tuple[str, str]:
-    """加载本地媒体文件（图片/视频），返回(文件路径, 媒体类型)"""
+
+def load_local_media(file_path: str) -> list[tuple[str, str]]:
+    """
+    加载本地媒体文件/文件夹，返回[(文件路径, 媒体类型), ...]
+    支持：单个文件、文件夹（自动遍历）
+    """
+    media_files = []
     try:
         # 处理file://协议
         if file_path.startswith("file://"):
             file_path = file_path[7:]
-        
+
         # 转换为绝对路径
         file_path = os.path.abspath(file_path)
+
+        # 检查路径是否存在
         if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail=f"本地文件不存在: {file_path}")
-        
-        # 检查文件权限
+            raise HTTPException(status_code=404, detail=f"路径不存在: {file_path}")
+
+        # 检查读取权限
         if not os.access(file_path, os.R_OK):
             raise HTTPException(status_code=403, detail=f"无读取权限: {file_path}")
-        
-        # 识别媒体类型（优先mimetypes，兜底扩展名）
-        content_type, _ = mimetypes.guess_type(file_path)
-        if not content_type:
-            ext = os.path.splitext(file_path)[1].lower()
-            ext_map = {
+
+        # 1. 如果是文件夹，遍历所有媒体文件
+        if os.path.isdir(file_path):
+            logger.info(f"遍历文件夹: {file_path}")
+            # 支持的媒体扩展名
+            supported_exts = {
                 # 图片
-                '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-                '.bmp': 'image/bmp', '.gif': 'image/gif', '.webp': 'image/webp',
+                '.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp',
                 # 视频
-                '.mp4': 'video/mp4', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime',
-                '.mkv': 'video/x-matroska', '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv'
+                '.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv'
             }
-            if ext not in ext_map:
-                raise HTTPException(status_code=400, detail=f"不支持的文件扩展名: {ext} (文件: {file_path})")
-            content_type = ext_map[ext]
-        
-        # 确定媒体类型
-        if content_type.startswith('image/'):
-            media_type = "image"
-        elif content_type.startswith('video/'):
-            media_type = "video"
+
+            # 遍历文件夹（仅一级，不递归）
+            for filename in os.listdir(file_path):
+                file_full_path = os.path.join(file_path, filename)
+                if os.path.isfile(file_full_path):
+                    ext = os.path.splitext(filename)[1].lower()
+                    if ext in supported_exts:
+                        # 识别媒体类型
+                        content_type, _ = mimetypes.guess_type(file_full_path)
+                        if not content_type:
+                            ext_map = {
+                                '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+                                '.bmp': 'image/bmp', '.gif': 'image/gif', '.webp': 'image/webp',
+                                '.mp4': 'video/mp4', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime',
+                                '.mkv': 'video/x-matroska', '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv'
+                            }
+                            content_type = ext_map.get(ext, '')
+
+                        if content_type.startswith('image/'):
+                            media_files.append((file_full_path, "image"))
+                        elif content_type.startswith('video/'):
+                            media_files.append((file_full_path, "video"))
+
+            if not media_files:
+                raise HTTPException(status_code=400, detail=f"文件夹 {file_path} 中未找到支持的媒体文件")
+
+        # 2. 如果是单个文件
         else:
-            raise HTTPException(status_code=400, detail=f"不支持的本地媒体类型: {content_type} (文件: {file_path})")
-        
-        logger.info(f"成功加载本地媒体: {file_path} (类型: {media_type})")
-        return file_path, media_type
+            # 识别媒体类型
+            content_type, _ = mimetypes.guess_type(file_path)
+            if not content_type:
+                ext = os.path.splitext(file_path)[1].lower()
+                ext_map = {
+                    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+                    '.bmp': 'image/bmp', '.gif': 'image/gif', '.webp': 'image/webp',
+                    '.mp4': 'video/mp4', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime',
+                    '.mkv': 'video/x-matroska', '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv'
+                }
+                if ext not in ext_map:
+                    raise HTTPException(status_code=400, detail=f"不支持的文件扩展名: {ext} (文件: {file_path})")
+                content_type = ext_map[ext]
+
+            if content_type.startswith('image/'):
+                media_files.append((file_path, "image"))
+            elif content_type.startswith('video/'):
+                media_files.append((file_path, "video"))
+            else:
+                raise HTTPException(status_code=400, detail=f"不支持的媒体类型: {content_type} (文件: {file_path})")
+
+        logger.info(f"成功加载 {len(media_files)} 个本地媒体文件: {[f[0] for f in media_files]}")
+        return media_files
+
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"加载本地媒体失败: {str(e)} (文件: {file_path})")
+        raise HTTPException(status_code=500, detail=f"加载本地媒体失败: {str(e)} (路径: {file_path})")
 
-def extract_content_and_media(messages: List[ChatMessage]) -> tuple[str, Optional[str], str]:
+
+def extract_content_and_media(messages: List[ChatMessage]) -> tuple[str, list[tuple[str, str]], str]:
     """
-    从OpenAI格式的消息中提取文本、媒体路径、媒体类型
-    支持：1.本地路径(file:///绝对路径/相对路径) 2.Base64 3.远程URL
-    返回: (text_content, media_path, media_type)
+    从OpenAI格式的消息中提取文本、多媒体路径列表、主媒体类型
+    支持：1.本地路径/文件夹 2.Base64 3.远程URL 4.多图/多视频
+    返回: (text_content, media_files, main_media_type)
+          media_files格式: [(文件路径, 媒体类型), ...]
     """
     system_prompt = ""
     text_parts = []
-    media_path = None
-    media_type = "text"
+    media_files = []  # 改为列表存储所有媒体文件
+    main_media_type = "text"
 
     for msg in messages:
         if msg.role == "system":
@@ -403,35 +465,51 @@ def extract_content_and_media(messages: List[ChatMessage]) -> tuple[str, Optiona
                     if item_type == "text":
                         text_parts.append(item.get("text", ""))
                     elif item_type == "image_url":  # 复用该字段支持所有媒体类型
-                        if media_path:  # 只处理第一个媒体文件
-                            continue
                         image_url_data = item.get("image_url", {})
                         url = image_url_data.get("url", "") if isinstance(image_url_data, dict) else image_url_data
-                        
-                        # 1. 本地文件（最高优先级）
+
+                        if not url:
+                            continue
+
+                        # 1. 本地文件/文件夹（最高优先级）
                         if url.startswith(("file://", "/", "./", "../")):
-                            media_path, media_type = load_local_media(url)
+                            local_media = load_local_media(url)
+                            media_files.extend(local_media)
                         # 2. Base64图片
                         elif url.startswith("data:image"):
-                            media_path = save_base64_image(url)
-                            media_type = "image"
+                            img_path = save_base64_image(url)
+                            media_files.append((img_path, "image"))
                         # 3. 远程URL（图片/视频）
                         elif url.startswith(("http://", "https://")):
-                            media_path, media_type = download_media_from_url(url)
+                            remote_path, remote_type = download_media_from_url(url)
+                            media_files.append((remote_path, remote_type))
+
+    # 确定主媒体类型
+    if media_files:
+        # 优先判断是否有视频，否则为图片
+        has_video = any(media_type == "video" for _, media_type in media_files)
+        main_media_type = "video" if has_video else "image"
 
     # 组合文本内容
     user_content = " ".join(text_parts).strip()
-    if not user_content and media_path:
-        # 无文本时默认生成描述指令
-        user_content = "请详细描述这个媒体文件的内容。"
+    if not user_content and media_files:
+        # 无文本时默认生成描述指令（适配多图）
+        if len(media_files) > 1:
+            user_content = f"请详细描述这{len(media_files)}个媒体文件的内容，并对比分析它们的异同点。"
+        else:
+            user_content = "请详细描述这个媒体文件的内容。"
+
     if system_prompt:
         logger.warning(f"System prompt暂时禁用: {system_prompt}")
-    return user_content, media_path, media_type
 
-# ========== 核心推理函数（同步，运行在线程池） ==========
-def process_inference_sync(prompt: str, media_path: Optional[str], media_type: str, stream: bool = False):
+    return user_content, media_files, main_media_type
+
+
+# ========== 核心推理函数（同步，支持多图） ==========
+def process_inference_sync(prompt: str, media_files: list[tuple[str, str]], main_media_type: str, stream: bool = False):
     """
-    同步推理函数（运行在线程池）
+    同步推理函数（支持多媒体文件）
+    media_files: [(文件路径, 媒体类型), ...]
     返回: 非流式返回文本，流式返回生成器
     """
     try:
@@ -442,18 +520,33 @@ def process_inference_sync(prompt: str, media_path: Optional[str], media_type: s
         model.history_max_posid = 0
         model.input_str = prompt
 
-        # 构建消息
-        if media_type == "text":
+        # 构建多媒体消息
+        messages = []
+        if main_media_type == "text" or not media_files:
             messages = model.text_message()
-        elif media_type == "image":
-            messages = model.image_message(media_path)
-        elif media_type == "video":
-            messages = model.video_message(media_path)
         else:
-            raise ValueError(f"不支持的媒体类型: {media_type}")
+            # 处理多个媒体文件（按顺序添加）
+            for idx, (media_path, media_type) in enumerate(media_files):
+                logger.info(f"处理第{idx + 1}/{len(media_files)}个媒体文件: {media_path} (类型: {media_type})")
+
+                if media_type == "image":
+                    media_msg = model.image_message(media_path)
+                elif media_type == "video":
+                    media_msg = model.video_message(media_path)
+                else:
+                    raise ValueError(f"不支持的媒体类型: {media_type}")
+
+                # 合并多媒体消息
+                if idx == 0:
+                    messages = media_msg
+                else:
+                    if isinstance(messages, list) and isinstance(media_msg, list):
+                        messages.extend(media_msg)
+                    else:
+                        messages += media_msg
 
         # 处理输入
-        inputs = model.process(messages, media_type)
+        inputs = model.process(messages, main_media_type)
         token_len = inputs.input_ids.numel()
         if token_len > model.model.MAX_INPUT_LENGTH:
             raise ValueError(f"输入长度超限: {token_len} > {model.model.MAX_INPUT_LENGTH}")
@@ -461,33 +554,35 @@ def process_inference_sync(prompt: str, media_path: Optional[str], media_type: s
         # 嵌入层
         model.model.forward_embed(inputs.input_ids)
 
-        # 视觉处理
+        # 视觉处理（适配多图）
         position_ids = None
-        if media_type == "image":
+        if main_media_type == "image":
+            # 多图时使用最后一个图片的grid信息（适配Qwen3-VL多图逻辑）
             model.vit_process_image(inputs)
             position_ids = model.get_rope_index(inputs.input_ids, inputs.image_grid_thw, model.ID_IMAGE_PAD)
             model.max_posid = int(position_ids.max())
-        elif media_type == "video":
+        elif main_media_type == "video":
             model.vit_process_video(inputs)
             position_ids = model.get_rope_index(inputs.input_ids, inputs.video_grid_thw, model.ID_VIDEO_PAD)
             model.max_posid = int(position_ids.max())
         else:
-            position_ids = np.array([list(range(token_len))]*3, dtype=np.int32)
+            position_ids = np.array([list(range(token_len))] * 3, dtype=np.int32)
             model.max_posid = token_len - 1
 
         # 预填充
-        prefill_token = model.forward_prefill(position_ids)  # 重命名变量避免作用域冲突
+        prefill_token = model.forward_prefill(position_ids)
 
         if stream:
             # 流式生成（返回生成器）
             def generate_stream():
                 chunk_id = f"chatcmpl-{int(time.time())}"
                 full_word_tokens = []
-                token = prefill_token  # 显式赋值，避免未定义
+                token = prefill_token
 
                 try:
                     # 第一个token
-                    if token is not None and token not in [model.ID_IM_END, model.ID_END] and token != model.tokenizer.eos_token_id:
+                    if token is not None and token not in [model.ID_IM_END,
+                                                           model.ID_END] and token != model.tokenizer.eos_token_id:
                         full_word_tokens.append(token)
                         word = model.tokenizer.decode(full_word_tokens, skip_special_tokens=True)
                         if "�" not in word:
@@ -510,7 +605,7 @@ def process_inference_sync(prompt: str, media_path: Optional[str], media_type: s
                         if model.model.history_length >= model.model.SEQLEN:
                             break
                         model.max_posid += 1
-                        pos_ids = np.array([model.max_posid]*3, dtype=np.int32)
+                        pos_ids = np.array([model.max_posid] * 3, dtype=np.int32)
                         token = model.model.forward_next(pos_ids)
 
                         if token in [model.ID_IM_END, model.ID_END]:
@@ -562,23 +657,25 @@ def process_inference_sync(prompt: str, media_path: Optional[str], media_type: s
                     yield f"data: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
                     yield "data: [DONE]\n\n"
                 finally:
-                    # 本地文件不删除，仅清理临时文件（Base64/URL下载的）
-                    if media_path and (media_path.startswith(tempfile.gettempdir()) or "tmp" in media_path):
-                        try:
-                            os.unlink(media_path)
-                        except:
-                            pass
+                    # 清理所有临时文件
+                    for media_path, _ in media_files:
+                        if media_path and (media_path.startswith(tempfile.gettempdir()) or "tmp" in media_path):
+                            try:
+                                os.unlink(media_path)
+                            except:
+                                pass
                 return
 
             return generate_stream()
         else:
-            # 非流式生成（原有逻辑，补充token空值检查）
+            # 非流式生成
             full_word_tokens = []
             response_text = ""
-            token = prefill_token  # 显式赋值
-            
+            token = prefill_token
+
             # 第一个token
-            if token is not None and token not in [model.ID_IM_END, model.ID_END] and token != model.tokenizer.eos_token_id:
+            if token is not None and token not in [model.ID_IM_END,
+                                                   model.ID_END] and token != model.tokenizer.eos_token_id:
                 full_word_tokens.append(token)
                 word = model.tokenizer.decode(full_word_tokens, skip_special_tokens=True)
                 if "�" not in word:
@@ -590,7 +687,7 @@ def process_inference_sync(prompt: str, media_path: Optional[str], media_type: s
                 if model.model.history_length >= model.model.SEQLEN:
                     break
                 model.max_posid += 1
-                pos_ids = np.array([model.max_posid]*3, dtype=np.int32)
+                pos_ids = np.array([model.max_posid] * 3, dtype=np.int32)
                 token = model.model.forward_next(pos_ids)
 
                 if token in [model.ID_IM_END, model.ID_END]:
@@ -605,23 +702,26 @@ def process_inference_sync(prompt: str, media_path: Optional[str], media_type: s
                     response_text += word
                     full_word_tokens = []
 
-            # 清理临时文件（本地文件不删除）
+            # 清理所有临时文件
+            for media_path, _ in media_files:
+                if media_path and (media_path.startswith(tempfile.gettempdir()) or "tmp" in media_path):
+                    try:
+                        os.unlink(media_path)
+                    except:
+                        pass
+
+            return response_text.strip() or "抱歉，模型没有生成有效回复。"
+    except Exception as e:
+        # 清理所有临时文件
+        for media_path, _ in media_files:
             if media_path and (media_path.startswith(tempfile.gettempdir()) or "tmp" in media_path):
                 try:
                     os.unlink(media_path)
                 except:
                     pass
-
-            return response_text.strip() or "抱歉，模型没有生成有效回复。"
-    except Exception as e:
-        # 清理临时文件
-        if media_path and (media_path.startswith(tempfile.gettempdir()) or "tmp" in media_path):
-            try:
-                os.unlink(media_path)
-            except:
-                pass
         logger.error(f"推理失败: {e}")
         raise
+
 
 # ========== API接口 ==========
 @app.get("/")
@@ -632,14 +732,14 @@ async def root():
         "api_key_header": API_CONFIG["header_name"],
         "api_key_format": f"{API_CONFIG['prefix']} <your-api-key>" if API_CONFIG['enabled'] else "未启用"
     }
-    
+
     return {
-        "message": "Qwen3-VL TPU推理服务运行中（支持多并发+本地媒体文件+API Key认证）",
+        "message": "Qwen3-VL TPU推理服务运行中（支持多并发+多图/文件夹+API Key认证）",
         "model": "qwen3-vl-instruct",
         "device": "BM1684X TPU",
         "max_concurrent": MAX_CONCURRENT_REQUESTS,
         "timestamp": int(time.time()),
-        "version": "2.2.0",
+        "version": "2.3.0",
         "api_config": api_info,
         "model_config": {
             "model_dir": args.model_dir,
@@ -649,6 +749,8 @@ async def root():
         },
         "supported_media": {
             "local_file": "支持file:///绝对路径、/绝对路径、./相对路径、../上级路径",
+            "local_folder": "支持文件夹路径（自动遍历一级目录下的所有媒体文件）",
+            "multi_media": "支持多个URL/base64/file://路径",
             "image_format": "jpg/jpeg/png/bmp/gif/webp",
             "video_format": "mp4/avi/mov/mkv/flv/wmv"
         },
@@ -660,6 +762,7 @@ async def root():
             "docs": "/docs"
         }
     }
+
 
 @app.get("/health")
 async def health_check():
@@ -680,26 +783,29 @@ async def health_check():
         "model_dir": args.model_dir,
         "max_concurrent": MAX_CONCURRENT_REQUESTS,
         "api_key_enabled": API_CONFIG["enabled"],
+        "support_multi_media": True,
+        "support_folder": True,
         "timestamp": int(time.time()),
-        "version": "2.2.0"
+        "version": "2.3.0"
     }
+
 
 @app.post("/v1/chat/completions")
 async def chat_completions(
-    request: ChatCompletionRequest,
-    # 新增：依赖注入验证API Key
-    _: None = Depends(require_api_key)
+        request: ChatCompletionRequest,
+        # 新增：依赖注入验证API Key
+        _: None = Depends(require_api_key)
 ):
     """
-    OpenAI兼容的聊天对话接口（支持多并发+本地图片/视频+API Key认证）
-    支持：1.本地媒体文件 2.Base64图片 3.远程URL媒体 4.纯文本
+    OpenAI兼容的聊天对话接口（支持多并发+多图/文件夹+API Key认证）
+    支持：1.本地文件/文件夹 2.多个Base64图片 3.多个远程URL媒体 4.纯文本
     """
     if not request.messages:
         raise HTTPException(status_code=400, detail="至少需要一条消息")
 
-    # 提取内容和媒体
-    user_message, media_path, media_type = extract_content_and_media(request.messages)
-    if not user_message and not media_path:
+    # 提取内容和多媒体文件
+    user_message, media_files, main_media_type = extract_content_and_media(request.messages)
+    if not user_message and not media_files:
         raise HTTPException(status_code=400, detail="未找到用户消息或媒体文件")
 
     # 并发控制：获取锁
@@ -708,10 +814,11 @@ async def chat_completions(
             loop = asyncio.get_running_loop()
             if request.stream:
                 # 流式响应
-                logger.info(f"流式处理请求（{media_type}）: {user_message[:50]}...")
+                logger.info(
+                    f"流式处理多媒体请求（{len(media_files)}个文件，类型：{main_media_type}）: {user_message[:50]}...")
                 stream_generator = await loop.run_in_executor(
                     EXECUTOR, process_inference_sync,
-                    user_message, media_path, media_type, True
+                    user_message, media_files, main_media_type, True
                 )
 
                 # 自定义异步迭代器包装器
@@ -737,10 +844,10 @@ async def chat_completions(
             else:
                 # 非流式响应
                 start_time = time.time()
-                logger.info(f"处理请求（{media_type}）: {user_message[:50]}...")
+                logger.info(f"处理多媒体请求（{len(media_files)}个文件，类型：{main_media_type}）: {user_message[:50]}...")
                 response_text = await loop.run_in_executor(
                     EXECUTOR, process_inference_sync,
-                    user_message, media_path, media_type, False
+                    user_message, media_files, main_media_type, False
                 )
 
                 # 构建响应
@@ -754,7 +861,8 @@ async def chat_completions(
                 usage = {
                     "prompt_tokens": len(user_message.split()),
                     "completion_tokens": len(response_text.split()),
-                    "total_tokens": len(user_message.split()) + len(response_text.split())
+                    "total_tokens": len(user_message.split()) + len(response_text.split()),
+                    "media_files_count": len(media_files)
                 }
 
                 return ChatCompletionResponse(
@@ -770,28 +878,29 @@ async def chat_completions(
             logger.error(f"聊天推理错误: {e}")
             raise HTTPException(status_code=500, detail=f"处理聊天请求时发生错误: {str(e)}")
 
+
 @app.post("/v1/media/describe")
 async def describe_media(
-    file: UploadFile = File(...),
-    prompt: str = Form(default="请简单描述这个媒体文件的内容。"),
-    stream: bool = Form(default=False),
-    # 依赖注入验证API Key
-    _: None = Depends(require_api_key)
+        file: UploadFile = File(...),
+        prompt: str = Form(default="请详细描述这个媒体文件的内容。"),
+        stream: bool = Form(default=False),
+        # 依赖注入验证API Key
+        _: None = Depends(require_api_key)
 ):
-    """媒体描述接口（支持图片/视频，流式/非流式输出+API Key认证）"""
+    """媒体描述接口（支持单文件上传，多文件请使用chat接口）"""
     start_time = time.time()
     temp_path = None
 
     try:
-        # 1. 快速校验文件类型（简化判断逻辑）
+        # 1. 快速校验文件类型
         media_type = None
         if file.content_type:
             if file.content_type.startswith('image/'):
                 media_type = "image"
             elif file.content_type.startswith('video/'):
                 media_type = "video"
-        
-        # 兜底：通过文件扩展名判断（防止content_type不准确）
+
+        # 兜底：通过文件扩展名判断
         if not media_type:
             ext = os.path.splitext(file.filename)[1].lower()
             image_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'}
@@ -800,38 +909,40 @@ async def describe_media(
                 media_type = "image"
             elif ext in video_exts:
                 media_type = "video"
-        
+
         if not media_type:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=f"不支持的文件类型：{file.content_type or '未知'}，仅支持图片/视频"
             )
 
-        # 2. 高效保存临时文件（减少IO操作）
+        # 2. 保存临时文件
         suffix = os.path.splitext(file.filename)[1] or ('.jpg' if media_type == 'image' else '.mp4')
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            # 直接写入，避免二次读取
             tmp.write(await file.read())
             temp_path = tmp.name
 
+        # 构建多媒体文件列表（适配统一的推理接口）
+        media_files = [(temp_path, media_type)]
+
         logger.info(f"开始处理{media_type}描述请求：{file.filename} | prompt: {prompt[:30]}...")
 
-        # 3. 并发控制 + 推理（简化逻辑）
+        # 3. 并发控制 + 推理
         async with REQUEST_LOCK:
             loop = asyncio.get_running_loop()
-            
+
             if stream:
-                # 流式响应（简化生成器包装）
+                # 流式响应
                 stream_generator = await loop.run_in_executor(
                     EXECUTOR, process_inference_sync,
-                    prompt, temp_path, media_type, True
+                    prompt, media_files, media_type, True
                 )
 
                 async def async_stream_wrapper():
                     try:
                         for chunk in stream_generator:
                             yield chunk
-                            await asyncio.sleep(0.001)  # 防止阻塞事件循环
+                            await asyncio.sleep(0.001)
                     except Exception as e:
                         err_msg = f"流式生成失败：{str(e)}"
                         logger.error(err_msg)
@@ -843,20 +954,20 @@ async def describe_media(
                     media_type="text/event-stream",
                     headers={
                         "Cache-Control": "no-cache",
-                        "X-Accel-Buffering": "no",  # 禁用nginx缓冲
+                        "X-Accel-Buffering": "no",
                         "Connection": "keep-alive"
                     }
                 )
             else:
-                # 非流式响应（简化返回结构）
+                # 非流式响应
                 description = await loop.run_in_executor(
                     EXECUTOR, process_inference_sync,
-                    prompt, temp_path, media_type, False
+                    prompt, media_files, media_type, False
                 )
-                
+
                 # 计算处理耗时
                 processing_time = round(time.time() - start_time, 2)
-                
+
                 return {
                     "status": "success",
                     "description": description,
@@ -883,10 +994,10 @@ async def describe_media(
             except:
                 pass
 
+
 @app.get("/v1/models")
 async def list_models(
-    # 新增：依赖注入验证API Key
-    _: None = Depends(require_api_key)
+        _: None = Depends(require_api_key)
 ):
     """列出可用模型"""
     return {
@@ -900,16 +1011,16 @@ async def list_models(
                 "permission": [],
                 "root": "qwen3-vl-instruct",
                 "parent": None,
-                "description": f"Qwen3-VL指令微调版本（模型目录：{args.model_dir}），在算能BM1684X TPU上运行"
+                "description": f"Qwen3-VL指令微调版本（支持多图/文件夹），在算能BM1684X TPU上运行"
             }
         ]
     }
 
+
 @app.get("/v1/models/{model_id}")
 async def get_model(
-    model_id: str,
-    # 新增：依赖注入验证API Key
-    _: None = Depends(require_api_key)
+        model_id: str,
+        _: None = Depends(require_api_key)
 ):
     """获取指定模型信息"""
     if model_id != "qwen3-vl-instruct":
@@ -925,14 +1036,20 @@ async def get_model(
             "devid": args.devid,
             "max_concurrent": MAX_CONCURRENT_REQUESTS
         },
+        "capabilities": {
+            "multi_media": True,
+            "folder_support": True,
+            "streaming": True,
+            "api_key_auth": API_CONFIG["enabled"]
+        },
         "api_config": API_CONFIG,
-        "description": f"Qwen3-VL指令微调版本（模型目录：{args.model_dir}），在算能BM1684X TPU上运行"
+        "description": f"Qwen3-VL指令微调版本（支持多图/文件夹），在算能BM1684X TPU上运行"
     }
+
 
 # ========== 启动配置 ==========
 if __name__ == "__main__":
-    print("🚀 启动Qwen3-VL TPU推理服务（支持多并发+本地媒体文件+API Key认证）...")
-    print(f"🎯 模型目录: {args.model_dir}")
+    print("🚀 启动Qwen3-VL TPU推理服务（支持多并发+多图/文件夹+API Key认证）...")
     print(f"🎯 模型文件: {MODEL_CONFIG['model_path']}")
     print(f"🔧 设备ID: {args.devid}")
     print(f"⚡ 最大并发数: {MAX_CONCURRENT_REQUESTS}")
@@ -941,11 +1058,13 @@ if __name__ == "__main__":
     print(f"📖 API文档: http://0.0.0.0:{args.port}/docs")
     print(f"💬 聊天接口: http://0.0.0.0:{args.port}/v1/chat/completions")
     print(f"🖼️  媒体描述: http://0.0.0.0:{args.port}/v1/media/describe")
-    print(f"📁 支持本地媒体: 绝对路径(/xxx/xxx.jpg)、相对路径(./xxx.jpg)、file://协议")
-    
+    print(f"📂 支持文件夹: file:///绝对路径/文件夹、/绝对路径/文件夹、./相对路径/文件夹")
+    print(f"📷 支持多图: 多个image_url字段（URL/base64/file://）")
+
     # 打印API Key配置信息
     if API_CONFIG["enabled"]:
-        print(f"🔒 API Key认证已启用: 请求头 {API_CONFIG['header_name']} = {API_CONFIG['prefix']} {API_CONFIG['api_key'][:4]}****{API_CONFIG['api_key'][-4:]}")
+        print(
+            f"🔒 API Key认证已启用: 请求头 {API_CONFIG['header_name']} = {API_CONFIG['prefix']} {API_CONFIG['api_key'][:4]}****{API_CONFIG['api_key'][-4:]}")
     else:
         print(f"⚠️ API Key认证未启用，生产环境请使用 --api-key 参数配置访问密钥")
 

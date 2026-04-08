@@ -334,12 +334,12 @@ MP4、AVI、MOV、MKV、FLV、WMV
    - 测试环境可通过`--disable-api-auth`临时禁用认证（仅调试用）
 5. **路径规范**：`file://`协议需使用绝对路径，相对路径仅支持本地文件上传
 6. **日志调试**：调试时使用`-l DEBUG`查看详细执行过程（含媒体处理/认证细节）
-7. **TPU设备**：确保`devid`与实际设备编号一致（通过`sophon-smi`查看）
+7. **TPU设备**：确保`device-id`与实际设备编号一致（通过`bm-smi`查看）
 
 ## 📄 许可证
 本项目基于算能官方LLM-TPU示例代码及Qwen3-VL官方仓库开发，遵循原项目许可协议。
 
-## 📞 技术支持
+## 🌐 技术支持
 - 算能开发者社区：https://www.sophgo.com/curriculum/index.html
 - SOPHON SDK文档：https://developer.sophgo.com/site/index/material/all/all.html
 - 算能LLM-TPU仓库：https://github.com/sophgo/LLM-TPU

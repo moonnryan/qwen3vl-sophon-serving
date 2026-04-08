@@ -1,0 +1,55 @@
+# ==========================
+# 系统自动生成文件（macOS/Windows）
+# ==========================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ==========================
+# PyCharm / IDE 配置文件
+# ==========================
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# ==========================
+# Python 虚拟环境 / 缓存
+# ==========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ==========================
+# C/C++ 编译产物
+# ==========================
+*.o
+*.out
+*.app
+build/
+CMakeFiles/
+cmake-build-debug/
+CMakeCache.txt
+CMakeLists.txt.user
+
+# ==========================
+# 日志 / 临时文件
+# ==========================
+*.log
+tmp/
+temp/
+*.tmp

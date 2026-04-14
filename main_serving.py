@@ -384,7 +384,7 @@ def load_local_media(file_path: str) -> list[tuple[str, str]]:
             # 遍历文件夹（仅一级，不递归）
             for filename in os.listdir(file_path):
                 file_full_path = os.path.join(file_path, filename)
-                if os.isfile(file_full_path):
+                if os.path.isfile(file_full_path):
                     ext = os.path.splitext(filename)[1].lower()
                     if ext in supported_exts:
                         # 识别媒体类型

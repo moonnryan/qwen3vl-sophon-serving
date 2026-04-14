@@ -25,4 +25,5 @@ docker run -d \
   /bin/bash -c "python main_serving.py -m ./models/qwen3vl_2b"
 
 echo "===== 容器启动完成 ====="
-docker ps | grep $CONTAINER_NAME
+echo "查看实时日志：docker logs -f ${CONTAINER_NAME}"
+echo "进入容器终端：docker exec -it ${CONTAINER_NAME} /bin/bash"

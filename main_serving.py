@@ -77,7 +77,7 @@ def parse_args():
     parser.add_argument(
         "--api-key",
         type=str,
-        default="abc@123",
+        default=None,
         help="API访问密钥（可选），若设置则所有受保护接口必须携带该密钥访问"
     )
     parser.add_argument(
@@ -141,9 +141,9 @@ MODEL_CONFIG = {
     "log_level": args.log_level
 }
 
-# 每个线程存储独立的模型实例（线程局部存储）
-THREAD_LOCAL = threading.local()
-
+# ====================== 🔥 全局单例模型（只加载1份，省内存）======================
+_GLOBAL_MODEL = None
+_MODEL_INIT_LOCK = threading.Lock()
 
 def create_model_args():
     """创建模型参数"""
@@ -154,30 +154,33 @@ def create_model_args():
     args.video_ratio = MODEL_CONFIG["video_ratio"]
     return args
 
-
-def get_thread_local_model():
-    """获取当前线程的模型实例（懒加载）"""
-    if not hasattr(THREAD_LOCAL, "model_instance"):
-        try:
-            logger.info(f"线程 {threading.get_ident()} 初始化模型实例...")
-            from pipeline import Qwen3_VL  # 导入pipline.py的模型类
-            args = create_model_args()
-            THREAD_LOCAL.model_instance = Qwen3_VL(args)
-            logger.info(f"线程 {threading.get_ident()} 模型初始化完成")
-        except Exception as e:
-            logger.error(f"线程 {threading.get_ident()} 模型初始化失败: {e}")
-            raise
-    return THREAD_LOCAL.model_instance
-
+def get_global_model():
+    """
+    全局单例模型（整个服务只加载一次！）
+    解决：内存不足、多份模型加载问题
+    """
+    global _GLOBAL_MODEL
+    with _MODEL_INIT_LOCK:
+        if _GLOBAL_MODEL is None:
+            try:
+                logger.info("🔥 全局单例模型初始化...")
+                from pipeline import Qwen3_VL
+                model_args = create_model_args()
+                _GLOBAL_MODEL = Qwen3_VL(model_args)
+            except Exception as e:
+                logger.error(f"❌ 模型初始化失败: {e}")
+                raise
+    return _GLOBAL_MODEL
+# ==============================================================================
 
 async def load_model_global():
-    """预加载第一个线程的模型（服务启动时）"""
+    """服务启动时预加载模型"""
     try:
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(EXECUTOR, get_thread_local_model)
-        logger.info("✅ 全局模型预加载成功！")
+        await loop.run_in_executor(EXECUTOR, get_global_model)
+        logger.info("✅ 模型预加载成功！")
     except Exception as e:
-        logger.error(f"❌ 全局模型预加载失败: {e}")
+        logger.error(f"❌ 模型预加载失败: {e}")
         logger.error(traceback.format_exc())
 
 
@@ -381,7 +384,7 @@ def load_local_media(file_path: str) -> list[tuple[str, str]]:
             # 遍历文件夹（仅一级，不递归）
             for filename in os.listdir(file_path):
                 file_full_path = os.path.join(file_path, filename)
-                if os.path.isfile(file_full_path):
+                if os.isfile(file_full_path):
                     ext = os.path.splitext(filename)[1].lower()
                     if ext in supported_exts:
                         # 识别媒体类型
@@ -513,12 +516,13 @@ def process_inference_sync(prompt: str, media_files: list[tuple[str, str]], main
     返回: 非流式返回文本，流式返回生成器
     """
     try:
-        # 获取当前线程的模型实例
-        model = get_thread_local_model()
-        # 重置模型历史（关键：请求隔离）
+        # ====================== 🔥 使用全局单例模型 ======================
+        model = get_global_model()
+        # 请求隔离：每次推理前强制清空历史状态
         model.model.clear_history()
         model.history_max_posid = 0
         model.input_str = prompt
+        # =================================================================
 
         # 构建多媒体消息
         messages = []
@@ -769,9 +773,9 @@ async def health_check():
     """健康检查接口"""
     try:
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(EXECUTOR, get_thread_local_model)
+        await loop.run_in_executor(EXECUTOR, get_global_model)
         status = "healthy"
-        details = "模型已加载且运行正常"
+        details = "全局单例模型已加载且运行正常"
     except Exception as e:
         status = "unhealthy"
         details = f"模型加载失败: {str(e)}"
@@ -1049,7 +1053,7 @@ async def get_model(
 
 # ========== 启动配置 ==========
 if __name__ == "__main__":
-    print("🚀 启动Qwen3-VL TPU推理服务（支持多并发+多图/文件夹+API Key认证）...")
+    print("🚀 启动Qwen3-VL TPU推理服务...")
     print(f"🎯 模型文件: {MODEL_CONFIG['model_path']}")
     print(f"🔧 设备ID: {args.devid}")
     print(f"⚡ 最大并发数: {MAX_CONCURRENT_REQUESTS}")

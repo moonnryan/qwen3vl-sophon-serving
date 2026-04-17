@@ -1,6 +1,7 @@
 #!/bin/bash
 CONTAINER_NAME="qwen3vl-serving"
 IMAGE_NAME="sophon-qwen3vl-serving:py310"
+CODE_PATH=$(pwd)
 
 echo "===== 停止并删除旧容器 $CONTAINER_NAME ====="
 docker stop $CONTAINER_NAME >/dev/null 2>&1
@@ -13,7 +14,7 @@ docker run -d \
   --restart unless-stopped \
   -p 8899:8899 \
   -v /opt/sophon:/opt/sophon \
-  -v /data/qwen3vl-service:/data/qwen3vl-service \
+  -v ${CODE_PATH}:/data/qwen3vl-service \
   -v /data:/data \
   -v /dev:/dev \
   -w /data/qwen3vl-service \
